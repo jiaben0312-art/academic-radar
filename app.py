@@ -18,8 +18,8 @@ import datetime
 # 1. 网页全局配置 & Session State 初始化
 # ==========================================
 st.set_page_config(page_title="全球学术前沿雷达", page_icon="📡", layout="wide")
-st.title("📡 全球学术前沿文献雷达 (祖嫣小公主特供版)")
-st.markdown("已解除抓取限制！支持跨语言模糊检索、日期范围筛选、双轴图表与**一键直达原文**。")
+st.title("📡 全球学术前沿文献雷达 (展示优化版)")
+st.markdown("已优化大数据量展示！智能提取核心领域，巨幅表格直观呈现，双独立日期精确检索。")
 
 if 'search_input' not in st.session_state:
     st.session_state.search_input = "photocatalysis VOCs"
@@ -50,14 +50,16 @@ with st.sidebar:
     
     search_keyword = st.text_input("🔍 检索关键词", key="search_input")
     
+    # 💡 核心改动 1：彻底分离日期选择，变成两个独立的输入框
+    st.markdown("📅 **发表日期范围**")
     today = datetime.date.today()
     last_year = today.replace(year=today.year - 1)
-    date_range = st.date_input("📅 发表日期范围", value=(last_year, today), max_value=today)
     
-    if len(date_range) == 2:
-        start_date, end_date = date_range
-    else:
-        start_date, end_date = date_range[0], today
+    col_d1, col_d2 = st.columns(2)
+    with col_d1:
+        start_date = st.date_input("起始日期", value=last_year, max_value=today)
+    with col_d2:
+        end_date = st.date_input("结束日期", value=today, max_value=today)
 
     max_papers = st.slider("📑 最大抓取数量 (拉得越多等得越久)", min_value=100, max_value=3000, value=1000, step=100)
 
@@ -121,7 +123,6 @@ def fetch_and_process_papers(keyword, start_str, end_str, limit):
                     sub_field = c.get("display_name", "Others")
                     break
             
-            # 💡 核心改动 1：分离纯 DOI 文本和包含 HTTPS 的完整 URL 链接
             raw_doi_url = item.get("doi", "")
             clean_doi = raw_doi_url.replace("https://doi.org/", "") if raw_doi_url else ""
             
@@ -130,8 +131,8 @@ def fetch_and_process_papers(keyword, start_str, end_str, limit):
                 "标题": item.get("title", "No Title"),
                 "期刊名": journal,
                 "领域聚类": sub_field,
-                "DOI": clean_doi,          # 只显示 10.xxxx/yyyy 这样干净的编号
-                "原文链接": raw_doi_url      # 保留完整的网址供后面变成按钮
+                "DOI": clean_doi,          
+                "原文链接": raw_doi_url      
             })
             if len(papers_data) >= limit: break
             
@@ -157,86 +158,105 @@ if st.sidebar.button("🚀 开始深度检索", type="primary", use_container_wi
     if search_keyword and search_keyword not in st.session_state.search_history:
         st.session_state.search_history.append(search_keyword)
     
-    start_str = start_date.strftime("%Y-%m-%d")
-    end_str = end_date.strftime("%Y-%m-%d")
-    
-    with st.spinner(f"正在全速抓取 {start_str} 至 {end_str} 期间关于 '{search_keyword}' 的大数据，可能需要十几秒，请耐心等待..."):
-        df = fetch_and_process_papers(search_keyword, start_str, end_str, max_papers)
-    
-    if df.empty:
-        st.error("没有找到符合条件的文献，请尝试放宽日期范围或更换关键词。")
+    # 确保起始日期不晚于结束日期
+    if start_date > end_date:
+        st.error("⚠️ 起始日期不能晚于结束日期，请重新选择！")
     else:
-        st.success(f"🎉 抓取成功！共获取 {len(df)} 篇文献。")
+        start_str = start_date.strftime("%Y-%m-%d")
+        end_str = end_date.strftime("%Y-%m-%d")
         
-        df_with_if = df.dropna(subset=['IF']).copy()
-        match_rate = len(df_with_if) / len(df) * 100 if len(df) > 0 else 0
+        with st.spinner(f"正在全速抓取 {start_str} 至 {end_str} 期间的大数据，可能需要十几秒，请耐心等待..."):
+            df = fetch_and_process_papers(search_keyword, start_str, end_str, max_papers)
         
-        col1, col2, col3 = st.columns(3)
-        col1.metric("抓取总文献数", f"{len(df)} 篇")
-        col2.metric("成功匹配 IF 数量", f"{len(df_with_if)} 篇")
-        col3.metric("IF 匹配率", f"{match_rate:.1f}%")
-
-        if not df_with_if.empty:
-            st.subheader("📊 领域热度与质量双轴图")
-            
-            count_df = df_with_if['领域聚类'].value_counts().reset_index()
-            count_df.columns = ['领域聚类', '发文量']
-            
-            fig = make_subplots(specs=[[{"secondary_y": True}]])
-            
-            fig.add_trace(
-                go.Bar(
-                    x=count_df['领域聚类'], y=count_df['发文量'], name="发文数量 (右轴)",
-                    marker_color='rgba(135, 206, 250, 0.4)',
-                    hovertemplate="<b>领域</b>: %{x}<br><b>发文量</b>: %{y} 篇<extra></extra>"
-                ), secondary_y=True,
-            )
-            
-            for field in count_df['领域聚类']:
-                df_sub = df_with_if[df_with_if['领域聚类'] == field]
-                hover_text = (
-                    "<b>影响因子:</b> " + df_sub['IF'].astype(str) + "<br>" +
-                    "<b>标题:</b> " + df_sub['标题'].str[:80] + "...<br>" +
-                    "<b>期刊:</b> " + df_sub['期刊名'] + "<br>" +
-                    "<b>DOI:</b> " + df_sub['DOI']
-                )
-                
-                fig.add_trace(
-                    go.Box(
-                        y=df_sub['IF'], x=df_sub['领域聚类'], name="影响因子 (左轴)",
-                        boxpoints='all', jitter=0.5, pointpos=0,
-                        fillcolor='rgba(0,0,0,0)', line=dict(color='rgba(0,0,0,0)'),
-                        marker=dict(size=7, color='#ff7f0e', opacity=0.8, line=dict(width=1, color='white')),
-                        text=hover_text, hoverinfo='text', showlegend=False
-                    ), secondary_y=False,
-                )
-                
-            fig.update_layout(
-                xaxis_tickangle=-35, height=650, plot_bgcolor='rgba(250,250,250,1)', hovermode="closest",
-                barmode='overlay', legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
-            )
-            
-            fig.update_yaxes(title_text="<b>影响因子 (IF)</b> [橙色散点]", secondary_y=False, gridcolor='rgba(200,200,200,0.3)')
-            fig.update_yaxes(title_text="<b>发文数量 (篇)</b> [蓝色柱状图]", secondary_y=True, showgrid=False)
-            
-            st.plotly_chart(fig, use_container_width=True)
+        if df.empty:
+            st.error("没有找到符合条件的文献，请尝试放宽日期范围或更换关键词。")
         else:
-            st.warning("⚠️ 未能匹配到影响因子。您可以查阅下方完整列表。")
+            st.success(f"🎉 抓取成功！共获取 {len(df)} 篇文献。")
+            
+            df_with_if = df.dropna(subset=['IF']).copy()
+            match_rate = len(df_with_if) / len(df) * 100 if len(df) > 0 else 0
+            
+            col1, col2, col3 = st.columns(3)
+            col1.metric("抓取总文献数", f"{len(df)} 篇")
+            col2.metric("成功匹配 IF 数量", f"{len(df_with_if)} 篇")
+            col3.metric("IF 匹配率", f"{match_rate:.1f}%")
 
-        st.subheader("📋 详细文献数据")
-        df_display = df.copy()
-        df_display['IF'] = df_display['IF'].fillna("未匹配")
-        
-        # 💡 核心改动 2：配置 LinkColumn，让 URL 变成可点击的按钮
-        st.dataframe(
-            df_display[['发表日期', '领域聚类', 'IF', '期刊名', '标题', 'DOI', '原文链接']],
-            use_container_width=True,
-            hide_index=True,
-            column_config={
-                "原文链接": st.column_config.LinkColumn(
-                    "原文链接",
-                    help="点击直接前往论文原始页面",
-                    display_text="点击访问 🌐" # 把冗长的 https://... 替换成这四个字
+            if not df_with_if.empty:
+                st.subheader("📊 领域热度与质量双轴图")
+                
+                # 统计发文量并降序排列
+                count_df = df_with_if['领域聚类'].value_counts().reset_index()
+                count_df.columns = ['领域聚类', '发文量']
+                
+                # 💡 核心改动 2：智能限制图表的 X 轴分类数量，避免拥挤
+                TOP_N = 15
+                if len(count_df) > TOP_N:
+                    st.info(f"💡 检测到细分领域多达 {len(count_df)} 个。为了保持图表清晰，上方双轴图仅展示发文量排名前 {TOP_N} 的核心领域。下方表格包含所有完整数据。")
+                    top_fields = count_df.head(TOP_N)['领域聚类'].tolist()
+                    df_plot = df_with_if[df_with_if['领域聚类'].isin(top_fields)].copy()
+                    count_df_plot = count_df.head(TOP_N)
+                else:
+                    df_plot = df_with_if.copy()
+                    count_df_plot = count_df.copy()
+                
+                fig = make_subplots(specs=[[{"secondary_y": True}]])
+                
+                # 画柱状图 (基于 Top N)
+                fig.add_trace(
+                    go.Bar(
+                        x=count_df_plot['领域聚类'], y=count_df_plot['发文量'], name="发文数量 (右轴)",
+                        marker_color='rgba(135, 206, 250, 0.4)',
+                        hovertemplate="<b>领域</b>: %{x}<br><b>发文量</b>: %{y} 篇<extra></extra>"
+                    ), secondary_y=True,
                 )
-            }
-        )
+                
+                # 画散点图 (基于 Top N)
+                for field in count_df_plot['领域聚类']:
+                    df_sub = df_plot[df_plot['领域聚类'] == field]
+                    hover_text = (
+                        "<b>影响因子:</b> " + df_sub['IF'].astype(str) + "<br>" +
+                        "<b>标题:</b> " + df_sub['标题'].str[:80] + "...<br>" +
+                        "<b>期刊:</b> " + df_sub['期刊名'] + "<br>" +
+                        "<b>DOI:</b> " + df_sub['DOI']
+                    )
+                    
+                    fig.add_trace(
+                        go.Box(
+                            y=df_sub['IF'], x=df_sub['领域聚类'], name="影响因子 (左轴)",
+                            boxpoints='all', jitter=0.5, pointpos=0,
+                            fillcolor='rgba(0,0,0,0)', line=dict(color='rgba(0,0,0,0)'),
+                            marker=dict(size=7, color='#ff7f0e', opacity=0.8, line=dict(width=1, color='white')),
+                            text=hover_text, hoverinfo='text', showlegend=False
+                        ), secondary_y=False,
+                    )
+                    
+                fig.update_layout(
+                    xaxis_tickangle=-35, height=650, plot_bgcolor='rgba(250,250,250,1)', hovermode="closest",
+                    barmode='overlay', legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
+                )
+                
+                fig.update_yaxes(title_text="<b>影响因子 (IF)</b> [橙色散点]", secondary_y=False, gridcolor='rgba(200,200,200,0.3)')
+                fig.update_yaxes(title_text="<b>发文数量 (篇)</b> [蓝色柱状图]", secondary_y=True, showgrid=False)
+                
+                st.plotly_chart(fig, use_container_width=True)
+            else:
+                st.warning("⚠️ 未能匹配到影响因子。您可以查阅下方完整列表。")
+
+            st.subheader("📋 详细文献全量数据 (可滚动查看全部)")
+            df_display = df.copy()
+            df_display['IF'] = df_display['IF'].fillna("未匹配")
+            
+            # 💡 核心改动 3：大幅增加表格高度 (height=800)，实现“巨幅展示”
+            st.dataframe(
+                df_display[['发表日期', '领域聚类', 'IF', '期刊名', '标题', 'DOI', '原文链接']],
+                use_container_width=True,
+                height=800,  # 让表格框变得非常高
+                hide_index=True,
+                column_config={
+                    "原文链接": st.column_config.LinkColumn(
+                        "原文链接",
+                        help="点击直接前往论文原始页面",
+                        display_text="点击访问 🌐" 
+                    )
+                }
+            )
