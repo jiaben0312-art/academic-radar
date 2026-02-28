@@ -18,8 +18,8 @@ import datetime
 # 1. 网页全局配置 & Session State 初始化
 # ==========================================
 st.set_page_config(page_title="全球学术前沿雷达", page_icon="📡", layout="wide")
-st.title("📡 全球学术前沿文献雷达 (大数据满血版)")
-st.markdown("已解除抓取限制！支持跨语言模糊检索、日期范围筛选与双轴图表可视化。")
+st.title("📡 全球学术前沿文献雷达 (祖嫣小公主特供版)")
+st.markdown("已解除抓取限制！支持跨语言模糊检索、日期范围筛选、双轴图表与**一键直达原文**。")
 
 if 'search_input' not in st.session_state:
     st.session_state.search_input = "photocatalysis VOCs"
@@ -59,26 +59,21 @@ with st.sidebar:
     else:
         start_date, end_date = date_range[0], today
 
-    # 🔓 核心解除限制 1：把滑块的上限提高到 3000，默认值设为 1000
     max_papers = st.slider("📑 最大抓取数量 (拉得越多等得越久)", min_value=100, max_value=3000, value=1000, step=100)
 
 # ==========================================
 # 3. 史诗级全学科影响因子大字典 
 # ==========================================
 SUPER_IF_DICT = {
-    # 综合 / 顶刊
     "Nature": 64.8, "Science": 56.9, "Cell": 64.5, "Nature Communications": 16.6, "Science Advances": 13.6,
     "The New England Journal of Medicine": 158.5, "The Lancet": 168.9, "JAMA": 120.7, "BMJ": 105.7, 
     "Nature Medicine": 82.9, "Nature Biotechnology": 68.1,
-    # 医学专刊与开源大刊
     "Ophthalmology": 13.1, "JAMA Ophthalmology": 7.8, "Investigative Ophthalmology & Visual Science": 4.9,
     "PLoS One": 3.7, "Scientific Reports": 4.6, "Frontiers in Cell and Developmental Biology": 5.3, 
     "Frontiers in Immunology": 7.3, "International Journal of Molecular Sciences": 5.6, "Molecules": 4.6,
     "Medicine": 1.6, "BMC Public Health": 4.1, "BMC Medicine": 9.3,
-    # AI 与 计算机
     "Nature Machine Intelligence": 25.8, "IEEE Transactions on Pattern Analysis and Machine Intelligence": 23.6,
     "Expert Systems with Applications": 8.5, "Knowledge-Based Systems": 8.8,
-    # 化学 / 材料 / 环境
     "Chemical Society Reviews": 46.2, "Advanced Materials": 29.4, "Journal of the American Chemical Society": 15.0, 
     "Energy & Environmental Science": 32.4, "Applied Catalysis B: Environment and Energy": 22.1, 
     "Chemical Engineering Journal": 15.1, "Water Research": 12.8, "Journal of Cleaner Production": 11.1, 
@@ -87,7 +82,7 @@ SUPER_IF_DICT = {
 super_if_dict_lower = {k.lower(): v for k, v in SUPER_IF_DICT.items()}
 
 # ==========================================
-# 4. 核心抓取函数 (白名单提速版)
+# 4. 核心抓取函数
 # ==========================================
 @st.cache_data(show_spinner=False)
 def fetch_and_process_papers(keyword, start_str, end_str, limit):
@@ -96,18 +91,17 @@ def fetch_and_process_papers(keyword, start_str, end_str, limit):
     page = 1
     
     while len(papers_data) < limit:
-        # 🔓 核心解除限制 2：使用 200/页 (最大值) 减少网络请求次数，并加入白名单邮箱加速
         params = {
             "search": keyword,
             "filter": f"from_publication_date:{start_str},to_publication_date:{end_str}",
             "sort": "publication_date:desc",
             "per-page": 200, 
             "page": page,
-            "mailto": "academic_radar_user@gmail.com" # OpenAlex Polite Pool (白名单加速)
+            "mailto": "academic_radar_user@gmail.com"
         }
         
         try:
-            response = requests.get(url, params=params, timeout=15) # 增加了一点等待时间
+            response = requests.get(url, params=params, timeout=15)
             if response.status_code != 200: break
         except Exception:
             break
@@ -127,12 +121,17 @@ def fetch_and_process_papers(keyword, start_str, end_str, limit):
                     sub_field = c.get("display_name", "Others")
                     break
             
+            # 💡 核心改动 1：分离纯 DOI 文本和包含 HTTPS 的完整 URL 链接
+            raw_doi_url = item.get("doi", "")
+            clean_doi = raw_doi_url.replace("https://doi.org/", "") if raw_doi_url else ""
+            
             papers_data.append({
                 "发表日期": item.get("publication_date", ""),
                 "标题": item.get("title", "No Title"),
                 "期刊名": journal,
                 "领域聚类": sub_field,
-                "DOI": item.get("doi", "")
+                "DOI": clean_doi,          # 只显示 10.xxxx/yyyy 这样干净的编号
+                "原文链接": raw_doi_url      # 保留完整的网址供后面变成按钮
             })
             if len(papers_data) >= limit: break
             
@@ -227,4 +226,17 @@ if st.sidebar.button("🚀 开始深度检索", type="primary", use_container_wi
         st.subheader("📋 详细文献数据")
         df_display = df.copy()
         df_display['IF'] = df_display['IF'].fillna("未匹配")
-        st.dataframe(df_display[['发表日期', '领域聚类', 'IF', '期刊名', '标题', 'DOI']], use_container_width=True, hide_index=True)
+        
+        # 💡 核心改动 2：配置 LinkColumn，让 URL 变成可点击的按钮
+        st.dataframe(
+            df_display[['发表日期', '领域聚类', 'IF', '期刊名', '标题', 'DOI', '原文链接']],
+            use_container_width=True,
+            hide_index=True,
+            column_config={
+                "原文链接": st.column_config.LinkColumn(
+                    "原文链接",
+                    help="点击直接前往论文原始页面",
+                    display_text="点击访问 🌐" # 把冗长的 https://... 替换成这四个字
+                )
+            }
+        )
